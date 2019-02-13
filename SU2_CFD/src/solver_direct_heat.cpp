@@ -1349,9 +1349,9 @@ void CHeatSolverFVM::Heat_Fluxes(CGeometry *geometry, CSolver **solver_container
             thermal_conductivity = config->GetThermalDiffusivity_Solid()*rho_cp_solid;
           }
 
-          HeatFlux[iMarker][iVertex] = -thermal_conductivity*dTdn;
+          HeatFlux[iMarker][iVertex] = -thermal_conductivity*dTdn*config->GetHeat_Flux_Ref();
 
-          Heat_Flux[iMarker] += thermal_conductivity*dTdn*config->GetTemperature_Ref()*Area;
+          Heat_Flux[iMarker] += HeatFlux[iMarker][iVertex]*Area;
         }
       }
     }
