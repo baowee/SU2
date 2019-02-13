@@ -50,7 +50,7 @@ CTurbSolver::CTurbSolver(void) : CSolver() {
 }
 
 CTurbSolver::CTurbSolver(CGeometry* geometry, CConfig *config) : CSolver() {
-  
+
   Gamma = config->GetGamma();
   Gamma_Minus_One = Gamma - 1.0;
   
@@ -64,7 +64,7 @@ CTurbSolver::CTurbSolver(CGeometry* geometry, CConfig *config) : CSolver() {
   nVertex = new unsigned long[nMarker];
   for (unsigned long iMarker = 0; iMarker < nMarker; iMarker++)
     nVertex[iMarker] = geometry->nVertex[iMarker];
-  
+
 }
 
 CTurbSolver::~CTurbSolver(void) {
@@ -775,7 +775,7 @@ void CTurbSolver::ImplicitEuler_Iteration(CGeometry *geometry, CSolver **solver_
             density     = solver_container[FLOW_SOL]->node[iPoint]->GetDensity();
           }
           if (incompressible) {
-            density_old = solver_container[FLOW_SOL]->node[iPoint]->GetDensity_Old();
+            density_old = solver_container[FLOW_SOL]->node[iPoint]->GetDensity();
             density     = solver_container[FLOW_SOL]->node[iPoint]->GetDensity();
           }
           
@@ -1239,6 +1239,8 @@ CTurbSASolver::CTurbSASolver(CGeometry *geometry, CConfig *config, unsigned shor
   unsigned long iPoint;
   su2double Density_Inf, Viscosity_Inf, Factor_nu_Inf, Factor_nu_Engine, Factor_nu_ActDisk;
 
+  bool multizone = config->GetMultizone_Problem();
+
   Gamma = config->GetGamma();
   Gamma_Minus_One = Gamma - 1.0;
   
@@ -1338,6 +1340,21 @@ CTurbSASolver::CTurbSASolver(CGeometry *geometry, CConfig *config, unsigned shor
         Cvector[iVar] = new su2double [nDim];
     }
     
+    /*--- Initialize the BGS residuals in multizone problems. ---*/
+    if (multizone){
+      Residual_BGS      = new su2double[nVar];         for (iVar = 0; iVar < nVar; iVar++) Residual_BGS[iVar]  = 0.0;
+      Residual_Max_BGS  = new su2double[nVar];         for (iVar = 0; iVar < nVar; iVar++) Residual_Max_BGS[iVar]  = 0.0;
+
+      /*--- Define some structures for locating max residuals ---*/
+
+      Point_Max_BGS       = new unsigned long[nVar];  for (iVar = 0; iVar < nVar; iVar++) Point_Max_BGS[iVar]  = 0;
+      Point_Max_Coord_BGS = new su2double*[nVar];
+      for (iVar = 0; iVar < nVar; iVar++) {
+        Point_Max_Coord_BGS[iVar] = new su2double[nDim];
+        for (iDim = 0; iDim < nDim; iDim++) Point_Max_Coord_BGS[iVar][iDim] = 0.0;
+      }
+    }
+
   }
   
   /*--- Initialize lower and upper limits---*/
@@ -3017,13 +3034,13 @@ void CTurbSASolver::SetNuTilde_WF(CGeometry *geometry, CSolver **solver_containe
   unsigned short iDim, jDim, iVar, iNode;
   unsigned long iVertex, iPoint, iPoint_Neighbor, counter;
   
-  su2double Wall_HeatFlux, func, func_prim;
+  su2double func, func_prim;
   su2double *Normal, Area;
   su2double div_vel, UnitNormal[3];
   su2double **grad_primvar, tau[3][3];
   su2double Vel[3], VelNormal, VelTang[3], VelTangMod, VelInfMod, WallDist[3], WallDistMod;
-  su2double Lam_Visc_Normal, Kin_Visc_Normal, dypw_dyp, Eddy_Visc, nu_til_old, nu_til_4, nu_til, cv1_3;
-  su2double T_Normal, P_Normal, M_Normal, Density_Normal;
+  su2double Lam_Visc_Normal, Kin_Visc_Normal, dypw_dyp, Eddy_Visc, nu_til_old, nu_til, cv1_3;
+  su2double T_Normal, P_Normal, Density_Normal;
   su2double Density_Wall, T_Wall, P_Wall, Lam_Visc_Wall, Tau_Wall, Tau_Wall_Old;
   su2double *Coord, *Coord_Normal;
   su2double diff, Delta;
@@ -3058,7 +3075,7 @@ void CTurbSASolver::SetNuTilde_WF(CGeometry *geometry, CSolver **solver_containe
   
   /*--- Get the specified wall heat flux from config ---*/
   
-  Wall_HeatFlux = config->GetWall_HeatFlux(Marker_Tag);
+  // Wall_HeatFlux = config->GetWall_HeatFlux(Marker_Tag);
   
   /*--- Loop over all of the vertices on this boundary marker ---*/
   
@@ -3127,7 +3144,7 @@ void CTurbSASolver::SetNuTilde_WF(CGeometry *geometry, CSolver **solver_containe
         
         /*--- Compute mach number ---*/
         
-        M_Normal = VelTangMod / sqrt(Gamma * Gas_Constant * T_Normal);
+        // M_Normal = VelTangMod / sqrt(Gamma * Gas_Constant * T_Normal);
         
         /*--- Compute the wall temperature using the Crocco-Buseman equation ---*/
         
@@ -3246,7 +3263,7 @@ void CTurbSASolver::SetNuTilde_WF(CGeometry *geometry, CSolver **solver_containe
         
         /*--- Solve for the new value of nu_tilde given the eddy viscosity and using a Newton method ---*/
         
-        nu_til_old = 0.0; nu_til_4 = 0.0; nu_til = 0.0; cv1_3 = 7.1*7.1*7.1;
+        nu_til_old = 0.0; nu_til = 0.0; cv1_3 = 7.1*7.1*7.1;
         nu_til_old = node[iPoint]->GetSolution(0);
         counter = 0; diff = 1.0;
         
@@ -3558,6 +3575,8 @@ CTurbSSTSolver::CTurbSSTSolver(CGeometry *geometry, CConfig *config, unsigned sh
   unsigned long iPoint;
   ifstream restart_file;
   string text_line;
+
+  bool multizone = config->GetMultizone_Problem();
   
   /*--- Array initialization ---*/
   
@@ -3639,6 +3658,22 @@ CTurbSSTSolver::CTurbSSTSolver(CGeometry *geometry, CConfig *config, unsigned sh
     
     LinSysSol.Initialize(nPoint, nPointDomain, nVar, 0.0);
     LinSysRes.Initialize(nPoint, nPointDomain, nVar, 0.0);
+
+    /*--- Initialize the BGS residuals in multizone problems. ---*/
+    if (multizone){
+      Residual_BGS      = new su2double[nVar];         for (iVar = 0; iVar < nVar; iVar++) Residual_BGS[iVar]  = 0.0;
+      Residual_Max_BGS  = new su2double[nVar];         for (iVar = 0; iVar < nVar; iVar++) Residual_Max_BGS[iVar]  = 0.0;
+
+      /*--- Define some structures for locating max residuals ---*/
+
+      Point_Max_BGS       = new unsigned long[nVar];  for (iVar = 0; iVar < nVar; iVar++) Point_Max_BGS[iVar]  = 0;
+      Point_Max_Coord_BGS = new su2double*[nVar];
+      for (iVar = 0; iVar < nVar; iVar++) {
+        Point_Max_Coord_BGS[iVar] = new su2double[nDim];
+        for (iDim = 0; iDim < nDim; iDim++) Point_Max_Coord_BGS[iVar][iDim] = 0.0;
+      }
+    }
+
   }
   
   /*--- Computation of gradients by least squares ---*/
