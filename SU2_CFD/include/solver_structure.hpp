@@ -15538,6 +15538,9 @@ private:
    * \param[in]  Wall_HeatFlux        - The value of the prescribed heat flux.
    * \param[in]  HeatFlux_Prescribed  - Whether or not the heat flux is prescribed by
                                         e.g. the boundary conditions.
+   * \param[in]  Wall_Temperature       - The value of the prescribed wall temperature.
+   * \param[in]  Temperature_Prescribed - Whether or not the temperature is precribed
+                                          by  the boundary conditions
    * \param[in]  derBasisElem         - Array, which contains the derivatives of the
                                         basis functions of the adjacent element
                                         in the integration points.
@@ -15552,6 +15555,7 @@ private:
    * \param[out] viscosityInt         - To be computed viscosity in the integration points.
    * \param[out] kOverCvInt           - To be computed thermal conductivity in the
                                         integration points.
+   * \param[in,out] wallModel         - Pointer to the wall model treatment.
    */
   void ComputeViscousFluxesBoundaryFaces(CConfig                  *config,
                                          const unsigned short     nFaceSimul,
@@ -15560,6 +15564,8 @@ private:
                                          const unsigned short     nDOFsElem,
                                          const su2double          Wall_HeatFlux,
                                          const bool               HeatFlux_Prescribed,
+                                         const su2double          Wall_Temperature,
+                                         const bool               Temperature_Prescribed,
                                          const su2double          *derBasisElem,
                                          const CSurfaceElementFEM *surfElem,
                                          const su2double          *solIntL,
@@ -15567,48 +15573,8 @@ private:
                                                su2double          *gradSolInt,
                                                su2double          *viscFluxes,
                                                su2double          *viscosityInt,
-                                               su2double          *kOverCvInt);
-
-  /*!
-   * \brief Function, which computes the viscous fluxes in the integration
-            points for the boundary faces that must be treated simulaneously.
-            The viscous fluxes are computed via a wall modeling approach.
-   * \param[in]  config                 - Definition of the particular problem.
-   * \param[in]  nFaceSimul             - Number of faces that are treated simultaneously
-                                          to improve performance.
-   * \param[in]  NPad                   - Value of the padding parameter to obtain optimal
-                                          performance in the gemm computations.
-   * \param[in]  nInt                   - Number of integration points on the face.
-   * \param[in]  Wall_HeatFlux          - The value of the prescribed heat flux.
-   * \param[in]  HeatFlux_Prescribed    - Whether or not the heat flux is prescribed by
-                                          the boundary conditions.
-   * \param[in]  Wall_Temperature       - The value of the prescribed wall temperature.
-   * \param[in]  Temperature_Prescribed - Whether or not the temperature is precribed
-                                          by  the boundary conditions
-   * \param[in]  surfElem               - Surface boundary elements for which the
-                                          viscous fluxes must be computed.
-   * \param[out] workArray              - Storage array
-   * \param[out] viscFluxes             - To be computed viscous fluxes in the
-                                          integration points.
-   * \param[out] viscosityInt           - To be computed viscosity in the integration points.
-   * \param[out] kOverCvInt             - To be computed thermal conductivity in the
-                                          integration points.
-   * \param[in,out] wallModel           - Pointer to the wall model treatment.
-   */
-  void WallTreatmentViscousFluxes(CConfig                  *config,
-                                  const unsigned short     nFaceSimul,
-                                  const unsigned short     NPad,
-                                  const unsigned short     nInt,
-                                  const su2double          Wall_HeatFlux,
-                                  const bool               HeatFlux_Prescribed,
-                                  const su2double          Wall_Temperature,
-                                  const bool               Temperature_Prescribed,
-                                  const CSurfaceElementFEM *surfElem,
-                                        su2double          *workArray,
-                                        su2double          *viscFluxes,
-                                        su2double          *viscosityInt,
-                                        su2double          *kOverCvInt,
-                                        CWallModel         *wallModel);
+                                               su2double          *kOverCvInt,
+                                               CWallModel         *wallModel);
 
   /*!
    * \brief Function, which computes the residual contribution from a boundary

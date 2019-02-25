@@ -15264,7 +15264,7 @@ void CFEM_DG_NSSolver::BC_Isothermal_Wall(CConfig                  *config,
      contains the wall velocity. For factWallVel = 1.0, the velocity of the
      right state is obtained by negating the interior velocity w.r.t. the
      velocity of the wall. */
-  const su2double factWallVel = 0.0;
+  // const su2double factWallVel = 0.0;
   // const su2double factWallVel = 1.0;
 
   /* Get the wall temperature. */
@@ -15329,45 +15329,33 @@ void CFEM_DG_NSSolver::BC_Isothermal_Wall(CConfig                  *config,
             can be computed using BoundaryStates_Euler_Wall. ---*/
       BoundaryStates_Euler_Wall(config, llEnd, NPad, &surfElem[l],
                                 solIntL, solIntR);
-    }
-    else {
 
-      /*--- Integration to the wall is used, so the no-slip condition is enforced,
-            albeit weakly. Loop over the number of faces in this chunk and the
-            number of integration points and apply the isothermal wall boundary
-            conditions to compute the right state. There are two options. Either
-            the velocity is negated or it is set to zero. Some experiments are
-            needed to see which formulation gives better results. ---*/
+      /*--- Explicitly set the temperature, such that the heat fluxes
+            from the wall model are not used. ---*/
       for(unsigned short ll=0; ll<llEnd; ++ll) {
-        const unsigned long  lll    = l + ll;
         const unsigned short llNVar = ll*nVar;
 
         for(unsigned short i=0; i<nInt; ++i) {
 
-           /* Easier storage of the grid velocity and the left and right solution
-             for this integration point. */
-          const su2double *gridVel = surfElem[lll].gridVelocities.data() + i*nDim;
-          const su2double *UL      = solIntL + NPad*i + llNVar;
-                su2double *UR      = solIntR + NPad*i + llNVar;
+          /* Easier storage of the right solution for this integration point. */
+          su2double *UR = solIntR + NPad*i + llNVar;
 
-          /* Set the right state for the density and the momentum variables of the
-             right state. Compute twice the possible kinetic energy. */
-          UR[0] = UL[0];
-          su2double DensityInv = 1.0/UL[0];
-          su2double kinEner    = 0.0;
+          /* Compute the kinetic energy. */
+          su2double kinEner = 0.0;
           for(unsigned short iDim=0; iDim<nDim; ++iDim) {
-            const su2double velL = DensityInv*UL[iDim+1];
-            const su2double dV   = factWallVel*(velL-gridVel[iDim]);
-            const su2double velR = gridVel[iDim] - dV;
-
-            UR[iDim+1] = UR[0]*velR;
-            kinEner   += velR*velR;
+            const su2double velR = UR[iDim+1]/UR[0];
+            kinEner += velR*velR;
           }
 
           /* Compute the total energy of the right state. */
           UR[nDim+1] = UR[0]*(StaticEnergy + 0.5*kinEner);
         }
       }
+    }
+    else {
+
+      SU2_MPI::Error("This test version should be run with wall functions",
+                     CURRENT_FUNCTION);
     }
 
     /* The remainder of the boundary treatment is the same for all
@@ -15600,22 +15588,13 @@ void CFEM_DG_NSSolver::ViscousBoundaryFacesBCTreatment(
   su2double *viscFluxes   = fluxes       + NPad*max(nInt*nDim, (int) nDOFsElem);
 
   /* Compute the viscous fluxes in the integration points of the faces that
-     are treated simulaneously. Make a distinction between a wall function
-     treatment and a standard computation of the viscous fluxes. */
-  if( wallModel ) {
-    WallTreatmentViscousFluxes(config, nFaceSimul, NPad, nInt, Wall_HeatFlux,
-                               HeatFlux_Prescribed, Wall_Temperature,
-                               Temperature_Prescribed, surfElem,
-                               gradSolInt, viscFluxes, viscosityInt,
-                               kOverCvInt, wallModel);
-  }
-  else {
-    ComputeViscousFluxesBoundaryFaces(config, nFaceSimul, NPad, nInt, nDOFsElem,
-                                      Wall_HeatFlux, HeatFlux_Prescribed,
-                                      derBasisElem, surfElem, solIntL,
-                                      fluxes, gradSolInt, viscFluxes,
-                                      viscosityInt, kOverCvInt);
-  }
+     are treated simulaneously. */
+  ComputeViscousFluxesBoundaryFaces(config, nFaceSimul, NPad, nInt, nDOFsElem,
+                                    Wall_HeatFlux, HeatFlux_Prescribed,
+                                    Wall_Temperature, Temperature_Prescribed,
+                                    derBasisElem, surfElem, solIntL,
+                                    fluxes, gradSolInt, viscFluxes,
+                                    viscosityInt, kOverCvInt, wallModel);
 
   /* The remainder of the boundary condition treatment is the same for all
      types of boundary conditions, including the symmetry plane and the
@@ -15635,6 +15614,8 @@ void CFEM_DG_NSSolver::ComputeViscousFluxesBoundaryFaces(
                                        const unsigned short     nDOFsElem,
                                        const su2double          Wall_HeatFlux,
                                        const bool               HeatFlux_Prescribed,
+                                       const su2double          Wall_Temperature,
+                                       const bool               Temperature_Prescribed,
                                        const su2double          *derBasisElem,
                                        const CSurfaceElementFEM *surfElem,
                                        const su2double          *solIntL,
@@ -15642,7 +15623,8 @@ void CFEM_DG_NSSolver::ComputeViscousFluxesBoundaryFaces(
                                              su2double          *gradSolInt,
                                              su2double          *viscFluxes,
                                              su2double          *viscosityInt,
-                                             su2double          *kOverCvInt) {
+                                             su2double          *kOverCvInt,
+                                             CWallModel         *wallModel) {
 
   /* Easier storage of the number of bytes to copy in the memcpy calls. */
   const unsigned long nBytes = nVar*sizeof(su2double);
@@ -15700,123 +15682,116 @@ void CFEM_DG_NSSolver::ComputeViscousFluxesBoundaryFaces(
                           surfElem[l].wallDistance.data(),
                           viscFluxes, viscosityInt, kOverCvInt);
   }
-}
 
-void CFEM_DG_NSSolver::WallTreatmentViscousFluxes(
-                                  CConfig                  *config,
-                                  const unsigned short     nFaceSimul,
-                                  const unsigned short     NPad,
-                                  const unsigned short     nInt,
-                                  const su2double          Wall_HeatFlux,
-                                  const bool               HeatFlux_Prescribed,
-                                  const su2double          Wall_Temperature,
-                                  const bool               Temperature_Prescribed,
-                                  const CSurfaceElementFEM *surfElem,
-                                        su2double          *workArray,
-                                        su2double          *viscFluxes,
-                                        su2double          *viscosityInt,
-                                        su2double          *kOverCvInt,
-                                        CWallModel         *wallModel) {
+  /*---------------------------------------------------------------------------*/
+  /*--- Step 3: Overwrite some of the viscous fluxes by the wall model.     ---*/
+  /*---------------------------------------------------------------------------*/
 
-  /* Loop over the simultaneously treated faces. */
-  for(unsigned short l=0; l<nFaceSimul; ++l) {
+  /* Check if a wall model has been specified. */
+  if( wallModel ) {
+
+    su2double *workArray = gradSolInt;
+
+    /* Loop over the simultaneously treated faces. */
+    for(unsigned short l=0; l<nFaceSimul; ++l) {
     const unsigned short llNVar = l*nVar;
 
-    /* Loop over the donors for this boundary face. */
-    for(unsigned long j=0; j<surfElem[l].donorsWallFunction.size(); ++j) {
+      /* Loop over the donors for this boundary face. */
+      for(unsigned long j=0; j<surfElem[l].donorsWallFunction.size(); ++j) {
 
-      /* Easier storage of the element ID of the donor and set the pointer
-         where the solution of this element starts. Note that by construction
-         the time level of the donor element is the same as the time level
-         of the boundary face. */
-      const unsigned long donorID    = surfElem[l].donorsWallFunction[j];
-      const unsigned short timeLevel = volElem[donorID].timeLevel;
-      const unsigned short nDOFsElem = volElem[donorID].nDOFsSol;
-      const su2double *solDOFsElem   = VecWorkSolDOFs[timeLevel].data()
-                                     + nVar*volElem[donorID].offsetDOFsSolThisTimeLevel;
+        /* Easier storage of the element ID of the donor and set the pointer
+           where the solution of this element starts. Note that by construction
+           the time level of the donor element is the same as the time level
+           of the boundary face. */
+        const unsigned long donorID    = surfElem[l].donorsWallFunction[j];
+        const unsigned short timeLevel = volElem[donorID].timeLevel;
+        const unsigned short nDOFsElem = volElem[donorID].nDOFsSol;
+        const su2double *solDOFsElem   = VecWorkSolDOFs[timeLevel].data()
+                                       + nVar*volElem[donorID].offsetDOFsSolThisTimeLevel;
 
-      /* Determine the number of integration points for this donor and
-         interpolate the solution for the corresponding exchange points. */
-      const unsigned short nIntThisDonor = surfElem[l].nIntPerWallFunctionDonor[j+1]
-                                         - surfElem[l].nIntPerWallFunctionDonor[j];
+        /* Determine the number of integration points for this donor and
+           interpolate the solution for the corresponding exchange points. */
+        const unsigned short nIntThisDonor = surfElem[l].nIntPerWallFunctionDonor[j+1]
+                                           - surfElem[l].nIntPerWallFunctionDonor[j];
 
-      blasFunctions->gemm(nIntThisDonor, nVar, nDOFsElem, surfElem[l].matWallFunctionDonor[j].data(),
-                          solDOFsElem, workArray, config);
+        blasFunctions->gemm(nIntThisDonor, nVar, nDOFsElem, surfElem[l].matWallFunctionDonor[j].data(),
+                            solDOFsElem, workArray, config);
 
-      /* Loop over the integration points for this donor element. */
-      for(unsigned short i=surfElem[l].nIntPerWallFunctionDonor[j];
-                         i<surfElem[l].nIntPerWallFunctionDonor[j+1]; ++i) {
+        /* Loop over the integration points for this donor element. */
+        for(unsigned short i=surfElem[l].nIntPerWallFunctionDonor[j];
+                           i<surfElem[l].nIntPerWallFunctionDonor[j+1]; ++i) {
 
-        /* Easier storage of the actual integration point. */
-        const unsigned short ii = surfElem[l].intPerWallFunctionDonor[i];
+          /* Easier storage of the actual integration point. */
+          const unsigned short ii = surfElem[l].intPerWallFunctionDonor[i];
 
-        /* Determine the normal and the wall velocity for this integration point. */
-        const su2double *normals = surfElem[l].metricNormalsFace.data() + ii*(nDim+1);
-        const su2double *gridVel = surfElem[l].gridVelocities.data() + ii*nDim;
+          /* Determine the normal and the wall velocity for this integration point. */
+          const su2double *normals = surfElem[l].metricNormalsFace.data() + ii*(nDim+1);
+          const su2double *gridVel = surfElem[l].gridVelocities.data() + ii*nDim;
 
-        /* Determine the velocities and pressure in the exchange point. */
-        const su2double *solInt = workArray
-                                + nVar*(i-surfElem[l].nIntPerWallFunctionDonor[j]);
+          /* Determine the velocities and pressure in the exchange point. */
+          const su2double *solInt = workArray
+                                  + nVar*(i-surfElem[l].nIntPerWallFunctionDonor[j]);
 
-        su2double rhoInv = 1.0/solInt[0];
-        su2double vel[]  = {0.0, 0.0, 0.0};
-        for(unsigned short k=0; k<nDim; ++k) vel[k] = rhoInv*solInt[k+1];
+          su2double rhoInv = 1.0/solInt[0];
+          su2double vel[]  = {0.0, 0.0, 0.0};
+          for(unsigned short k=0; k<nDim; ++k) vel[k] = rhoInv*solInt[k+1];
  
-        su2double vel2Mag = vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2];
-        su2double eInt    = rhoInv*solInt[nVar-1] - 0.5*vel2Mag;
+          su2double vel2Mag = vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2];
+          su2double eInt    = rhoInv*solInt[nVar-1] - 0.5*vel2Mag;
 
-        FluidModel->SetTDState_rhoe(solInt[0], eInt);
-        const su2double Pressure = FluidModel->GetPressure();
-        const su2double Temperature = FluidModel->GetTemperature();
-        const su2double LaminarViscosity= FluidModel->GetLaminarViscosity();
+          FluidModel->SetTDState_rhoe(solInt[0], eInt);
+          const su2double Pressure = FluidModel->GetPressure();
+          const su2double Temperature = FluidModel->GetTemperature();
+          const su2double LaminarViscosity= FluidModel->GetLaminarViscosity();
 
-        /* Subtract the prescribed wall velocity, i.e. grid velocity
-           from the velocity in the exchange point. */
-        for(unsigned short k=0; k<nDim; ++k) vel[k] -= gridVel[k];
+          /* Subtract the prescribed wall velocity, i.e. grid velocity
+             from the velocity in the exchange point. */
+          for(unsigned short k=0; k<nDim; ++k) vel[k] -= gridVel[k];
 
-        /* Determine the tangential velocity by subtracting the normal
-           velocity component. */
-        su2double velNorm = 0.0;
-        for(unsigned short k=0; k<nDim; ++k) velNorm += normals[k]*vel[k];
-        for(unsigned short k=0; k<nDim; ++k) vel[k]  -= normals[k]*velNorm;
+          /* Determine the tangential velocity by subtracting the normal
+             velocity component. */
+          su2double velNorm = 0.0;
+          for(unsigned short k=0; k<nDim; ++k) velNorm += normals[k]*vel[k];
+          for(unsigned short k=0; k<nDim; ++k) vel[k]  -= normals[k]*velNorm;
 
-        /* Determine the magnitude of the tangential velocity as well
-           as its direction (unit vector). */
-        su2double velTan = sqrt(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
-        velTan = max(velTan,1.e-25);
+          /* Determine the magnitude of the tangential velocity as well
+             as its direction (unit vector). */
+          su2double velTan = sqrt(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
+          velTan = max(velTan,1.e-25);
 
-        su2double dirTan[] = {0.0, 0.0, 0.0};
-        for(unsigned short k=0; k<nDim; ++k) dirTan[k] = vel[k]/velTan;
+          su2double dirTan[] = {0.0, 0.0, 0.0};
+          for(unsigned short k=0; k<nDim; ++k) dirTan[k] = vel[k]/velTan;
         
-        /* Compute the wall shear stress and heat flux vector using
-           the wall model. */
-        su2double tauWall, qWall, ViscosityWall, kOverCvWall;
+          /* Compute the wall shear stress and heat flux vector using
+             the wall model. */
+          su2double tauWall, qWall, ViscosityWall, kOverCvWall;
         
-        wallModel->WallShearStressAndHeatFlux(Temperature, velTan, LaminarViscosity, Pressure,
-                                              Wall_HeatFlux, HeatFlux_Prescribed,
-                                              Wall_Temperature, Temperature_Prescribed,
-                                              FluidModel, tauWall, qWall, ViscosityWall,
-                                              kOverCvWall);
+          wallModel->WallShearStressAndHeatFlux(Temperature, velTan, LaminarViscosity, Pressure,
+                                                Wall_HeatFlux, HeatFlux_Prescribed,
+                                                Wall_Temperature, Temperature_Prescribed,
+                                                FluidModel, tauWall, qWall, ViscosityWall,
+                                                kOverCvWall);
 
-        /* Determine the position where the viscous fluxes, viscosity and
-           thermal conductivity must be stored. */
-        su2double *normalFlux = viscFluxes + NPad*ii + llNVar;
+          /* Determine the position where the viscous fluxes, viscosity and
+             thermal conductivity must be stored. */
+          su2double *normalFlux = viscFluxes + NPad*ii + llNVar;
 
-        const unsigned short ind = l*nInt + ii;
-        viscosityInt[ind] = ViscosityWall;
-        kOverCvInt[ind]   = kOverCvWall;
+      /*  const unsigned short ind = l*nInt + ii;
+          viscosityInt[ind] = ViscosityWall;
+          kOverCvInt[ind]   = kOverCvWall; */
 
-        /* Compute the prescribed velocity in tangential direction. */
-        su2double velTanPrescribed = 0.0;
-        for(unsigned short k=0; k<nDim; ++k)
-          velTanPrescribed += gridVel[k]*dirTan[k];
+          /* Compute the prescribed velocity in tangential direction. */
+    /*    su2double velTanPrescribed = 0.0;
+          for(unsigned short k=0; k<nDim; ++k)
+            velTanPrescribed += gridVel[k]*dirTan[k]; */
 
-        /* Compute the viscous normal flux. Note that the unscaled normals
-           must be used, hence the multiplication with normals[nDim]. */
-        normalFlux[0] = 0.0;
-        for(unsigned short k=0; k<nDim; ++k)
-          normalFlux[k+1] = -normals[nDim]*tauWall*dirTan[k];
-        normalFlux[nVar-1] = normals[nDim]*(qWall - tauWall*velTanPrescribed);
+          /* Compute the viscous normal flux. Note that the unscaled normals
+             must be used, hence the multiplication with normals[nDim]. */
+          normalFlux[0] = 0.0;
+          for(unsigned short k=0; k<nDim; ++k)
+            normalFlux[k+1] = -normals[nDim]*tauWall*dirTan[k];
+     //   normalFlux[nVar-1] = normals[nDim]*(qWall - tauWall*velTanPrescribed);
+        }
       }
     }
   }
